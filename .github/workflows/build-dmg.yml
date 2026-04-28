@@ -1,0 +1,90 @@
+name: Build macOS DMG
+
+on:
+  push:
+    tags:
+      - "v*"          # triggers on version tags like v1.0.0
+  workflow_dispatch:   # allows manual trigger from the Actions tab
+
+permissions:
+  contents: write     # needed to create GitHub Releases and upload assets
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Generate app icon
+        run: python scripts/build_icon.py
+
+      - name: Build .app with PyInstaller
+        run: |
+          pyinstaller \
+            --windowed \
+            --onedir \
+            --name "SsmDbTunnel" \
+            --osx-bundle-identifier "com.ssmtunnel.app" \
+            --add-data "templates:templates" \
+            --add-data "data/hostname_port_map.json:data" \
+            --collect-all "bleach" \
+            --collect-all "flask" \
+            --collect-all "jinja2" \
+            --hidden-import "rumps" \
+            --hidden-import "pymysql" \
+            --hidden-import "pymysql.cursors" \
+            --icon "SsmDbTunnel.icns" \
+            launcher.py
+
+      - name: Sign app (ad-hoc)
+        run: |
+          codesign --deep --force --sign - dist/SsmDbTunnel.app \
+            && echo "✅ Signed (ad-hoc)" \
+            || echo "⚠️ codesign skipped"
+
+      - name: Determine DMG filename
+        id: dmg
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "filename=SsmDbTunnel-${VERSION}.dmg" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Create DMG
+        run: |
+          hdiutil create \
+            -volname "SsmDbTunnel" \
+            -srcfolder dist/SsmDbTunnel.app \
+            -ov -format UDZO \
+            "dist/${{ steps.dmg.outputs.filename }}"
+
+      # Always upload the DMG as a downloadable artifact (available for 90 days)
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.dmg.outputs.filename }}
+          path: dist/${{ steps.dmg.outputs.filename }}
+          retention-days: 90
+
+      # On tag pushes only: create a GitHub Release and attach the DMG
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: SsmDbTunnel ${{ steps.dmg.outputs.version }}
+          tag_name: ${{ steps.dmg.outputs.version }}
+          generate_release_notes: true
+          files: dist/${{ steps.dmg.outputs.filename }}

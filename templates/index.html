@@ -1,0 +1,1527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DB Port Forwarding</title>
+    <style>
+        :root {
+            --glass-bg:           rgba(255,255,255,0.06);
+            --glass-bg-hover:     rgba(255,255,255,0.10);
+            --glass-border:       rgba(255,255,255,0.09);
+            --glass-border-hover: rgba(255,255,255,0.18);
+            --sidebar-bg:         rgba(99,102,241,0.055);
+            --sidebar-border:     rgba(99,102,241,0.18);
+            --text-1: rgba(255,255,255,0.88);
+            --text-2: rgba(255,255,255,0.50);
+            --text-3: rgba(255,255,255,0.28);
+            --accent:   #6366f1;
+            --accent-2: #8b5cf6;
+            --success:  #34d399;
+            --danger:   #f87171;
+            --warning:  #fbbf24;
+            --blur: blur(48px) saturate(190%);
+            --r:    18px;
+            --r-sm: 11px;
+        }
+        * { margin:0; padding:0; box-sizing:border-box; }
+
+        html { background: #13141f; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+            background: #13141f;
+            padding: 18px 20px 20px;
+            color: var(--text-1);
+            overflow-x: hidden;
+        }
+
+        /* ── Ambient background orbs ───────────────────────────────────── */
+        body::before, body::after {
+            content: '';
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(120px);
+            pointer-events: none;
+            z-index: 0;
+        }
+        body::before {
+            width: 560px; height: 560px;
+            background: radial-gradient(circle, rgba(99,102,241,.09) 0%, transparent 70%);
+            top: -180px; left: -120px;
+            animation: orb1 22s ease-in-out infinite alternate;
+        }
+        body::after {
+            width: 420px; height: 420px;
+            background: radial-gradient(circle, rgba(139,92,246,.07) 0%, transparent 70%);
+            bottom: -90px; right: -90px;
+            animation: orb2 28s ease-in-out infinite alternate;
+        }
+        @keyframes orb1 { to { transform: translate(90px, 130px) scale(1.10); } }
+        @keyframes orb2 { to { transform: translate(-70px, -100px) scale(0.90); } }
+
+        .container {
+            max-width: 1220px;
+            margin: 0 auto;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* ── Glass surface ─────────────────────────────────────────────── */
+        .card, .header {
+            background: var(--glass-bg);
+            backdrop-filter: var(--blur);
+            -webkit-backdrop-filter: var(--blur);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--r);
+            box-shadow:
+                inset 0 1px 0 rgba(255,255,255,.06),
+                0 16px 48px rgba(0,0,0,.48),
+                0 3px 9px rgba(0,0,0,.20);
+            padding: 22px 24px;
+            transition: border-color .2s;
+        }
+        .card:hover { border-color: var(--glass-border-hover); }
+
+        /* ── Header ────────────────────────────────────────────────────── */
+        .header {
+            margin-bottom: 18px;
+            padding: 18px 26px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+        .header-left h1 {
+            font-size: 19px;
+            font-weight: 700;
+            letter-spacing: -.5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .app-icon {
+            width: 32px; height: 32px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            border-radius: 8px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            box-shadow: 0 4px 14px rgba(99,102,241,.36);
+            flex-shrink: 0;
+        }
+        .header-left p { color: var(--text-2); font-size: 12px; margin-top: 4px; }
+        .status-bar {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            font-size: 12px;
+            color: var(--text-2);
+            background: rgba(255,255,255,.05);
+            padding: 5px 12px;
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,.06);
+        }
+        .status-indicator {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: rgba(255,255,255,.2);
+            transition: background .3s;
+        }
+        .status-indicator.active {
+            background: var(--success);
+            animation: liveDot 2s ease-out infinite;
+        }
+        @keyframes liveDot {
+            0%   { box-shadow: 0 0 0 0   rgba(52,211,153,.8); }
+            70%  { box-shadow: 0 0 0 7px rgba(52,211,153,0); }
+            100% { box-shadow: 0 0 0 0   rgba(52,211,153,0); }
+        }
+
+        /* ── Two-column layout ─────────────────────────────────────────── */
+        .layout-grid {
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 16px;
+            align-items: start;
+        }
+        @media (max-width: 860px) {
+            .layout-grid { grid-template-columns: 1fr; }
+            .sidebar { order: 2; }
+            .main-panel { order: 1; }
+        }
+        .sidebar, .main-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        /* Column label */
+        .col-label {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: .9px;
+            text-transform: uppercase;
+            color: var(--text-3);
+            padding: 0 3px;
+            margin-bottom: 2px;
+        }
+
+        /* Sidebar cards get a subtle indigo tint */
+        .sidebar .card {
+            background: var(--sidebar-bg);
+            border-color: var(--sidebar-border);
+        }
+        .sidebar .card:hover { border-color: rgba(99,102,241,.30); }
+
+        /* ── Card headings ─────────────────────────────────────────────── */
+        .card h2 { font-size: 14px; font-weight: 650; letter-spacing: -.2px; }
+        .card h3 { font-size: 12px; font-weight: 600; color: var(--text-2); margin-bottom: 10px; }
+        .card-sub {
+            color: var(--text-2);
+            font-size: 12px;
+            margin-top: 4px;
+            line-height: 1.5;
+        }
+
+        /* ── Buttons ───────────────────────────────────────────────────── */
+        .btn {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 9px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all .18s cubic-bezier(.4,0,.2,1);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            letter-spacing: -.1px;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            color: #fff;
+        }
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(99,102,241,.42);
+        }
+        .btn-danger {
+            background: rgba(248,113,113,.09);
+            color: var(--danger);
+            border: 1px solid rgba(248,113,113,.22);
+        }
+        .btn-danger:hover {
+            background: rgba(248,113,113,.18);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(248,113,113,.20);
+        }
+        .btn-success {
+            background: rgba(52,211,153,.09);
+            color: var(--success);
+            border: 1px solid rgba(52,211,153,.22);
+        }
+        .btn-success:hover {
+            background: rgba(52,211,153,.18);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(52,211,153,.16);
+        }
+        .btn-secondary {
+            background: rgba(255,255,255,.06);
+            color: var(--text-2);
+            border: 1px solid var(--glass-border);
+        }
+        .btn-secondary:hover {
+            background: rgba(255,255,255,.11);
+            color: var(--text-1);
+            transform: translateY(-2px);
+        }
+        .btn:disabled {
+            opacity: .35;
+            cursor: not-allowed;
+            transform: none !important;
+            box-shadow: none !important;
+        }
+        .btn-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+
+        /* ── Glass inputs ──────────────────────────────────────────────── */
+        input[type="text"],
+        input[type="number"],
+        input[type="password"] {
+            background: rgba(255,255,255,.05);
+            border: 1px solid var(--glass-border);
+            border-radius: 9px;
+            color: var(--text-1);
+            font-size: 13px;
+            font-family: inherit;
+            padding: 8px 12px;
+            outline: none;
+            transition: border-color .2s, box-shadow .2s, background .2s;
+        }
+        input::placeholder { color: var(--text-3); }
+        input:focus {
+            border-color: rgba(99,102,241,.48);
+            background: rgba(99,102,241,.07);
+            box-shadow: 0 0 0 3px rgba(99,102,241,.11);
+        }
+
+        /* ── Search bars ───────────────────────────────────────────────── */
+        .search-input { width: 100%; margin: 12px 0 13px; }
+
+        /* ── Endpoint list ─────────────────────────────────────────────── */
+        .pharmacy-list {
+            max-height: 320px;
+            overflow-y: auto;
+            border-radius: var(--r-sm);
+            border: 1px solid var(--glass-border);
+            background: rgba(0,0,0,.15);
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,.10) transparent;
+        }
+        .pharmacy-list::-webkit-scrollbar { width: 4px; }
+        .pharmacy-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.11); border-radius: 8px; }
+
+        .select-all-container {
+            padding: 9px 13px;
+            background: rgba(99,102,241,.07);
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            align-items: center;
+            gap: 9px;
+        }
+        .select-all-container label {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text-1);
+            cursor: pointer;
+        }
+        .select-all-container input[type="checkbox"] {
+            width: 14px; height: 14px;
+            cursor: pointer;
+            accent-color: var(--accent);
+        }
+
+        .pharmacy-item {
+            padding: 10px 13px;
+            border-bottom: 1px solid rgba(255,255,255,.030);
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            transition: background .15s;
+            cursor: pointer;
+        }
+        .pharmacy-item:last-child { border-bottom: none; }
+        .pharmacy-item:hover { background: rgba(255,255,255,.04); }
+        .pharmacy-item input[type="checkbox"] {
+            width: 14px; height: 14px;
+            cursor: pointer;
+            accent-color: var(--accent);
+            flex-shrink: 0;
+        }
+        .pharmacy-info { flex: 1; min-width: 0; }
+        .pharmacy-name {
+            font-weight: 600;
+            font-size: 13px;
+            color: var(--text-1);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .pharmacy-details { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+        .pharmacy-url {
+            font-size: 10px;
+            color: var(--text-3);
+            font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+            margin-top: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* ── Loading / Empty ───────────────────────────────────────────── */
+        .loading {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-2);
+        }
+        .spinner {
+            border: 2px solid rgba(255,255,255,.07);
+            border-top: 2px solid var(--accent);
+            border-radius: 50%;
+            width: 26px; height: 26px;
+            animation: spin .75s linear infinite;
+            margin: 0 auto 11px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .empty-state {
+            text-align: center;
+            padding: 48px 20px;
+            color: var(--text-3);
+        }
+        .empty-state svg { width: 42px; height: 42px; margin-bottom: 10px; opacity: .17; }
+
+        /* ── Inline messages ───────────────────────────────────────────── */
+        .message {
+            padding: 10px 13px;
+            border-radius: var(--r-sm);
+            margin-bottom: 13px;
+            display: none;
+            font-size: 13px;
+            border-left: 3px solid transparent;
+            line-height: 1.5;
+        }
+        .message.success { background: rgba(52,211,153,.08);  color: #6ee7b7; border-color: var(--success); }
+        .message.error   { background: rgba(248,113,113,.08); color: #fca5a5; border-color: var(--danger);  }
+        .message.info    { background: rgba(99,102,241,.08);  color: #a5b4fc; border-color: var(--accent);  }
+
+        .results-list { margin-top: 8px; font-size: 12px; }
+        .result-item {
+            padding: 5px 8px;
+            margin-bottom: 4px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .result-item.success { background: rgba(52,211,153,.09);  color: #6ee7b7; }
+        .result-item.error   { background: rgba(248,113,113,.09); color: #fca5a5; }
+
+        /* ── Active connection cards ────────────────────────────────────── */
+        .active-connections {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 10px;
+            margin-top: 12px;
+        }
+        .connection-card {
+            background: rgba(255,255,255,.05);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--r-sm);
+            padding: 15px 15px 11px;
+            position: relative;
+            overflow: hidden;
+            transition: all .2s;
+        }
+        .connection-card::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        }
+        .connection-card:hover {
+            background: rgba(255,255,255,.08);
+            border-color: var(--glass-border-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 10px 26px rgba(0,0,0,.38);
+        }
+        .connection-card .close-btn {
+            position: absolute;
+            top: 10px; right: 10px;
+            background: rgba(248,113,113,.09);
+            color: var(--danger);
+            border: 1px solid rgba(248,113,113,.18);
+            border-radius: 50%;
+            width: 22px; height: 22px;
+            cursor: pointer;
+            font-size: 13px;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all .18s;
+        }
+        .connection-card .close-btn:hover {
+            background: rgba(248,113,113,.22);
+            transform: scale(1.12);
+        }
+        .connection-card h3 {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-1);
+            margin-bottom: 7px;
+            padding-right: 26px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .connection-card .port-info {
+            font-size: 13px;
+            font-weight: 600;
+            color: #a5b4fc;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-bottom: 4px;
+            font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+        }
+        .connection-card .hostname-info {
+            font-size: 10px;
+            color: var(--text-3);
+            font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .connection-card .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(52,211,153,.08);
+            color: var(--success);
+            border: 1px solid rgba(52,211,153,.17);
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 10px;
+            font-weight: 600;
+            margin-top: 8px;
+        }
+
+        /* ── Collapsible card toggles ───────────────────────────────────── */
+        .config-toggle {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
+            font-weight: 650;
+            color: var(--text-1);
+            letter-spacing: -.2px;
+            transition: color .15s;
+        }
+        .config-toggle:hover { color: #a5b4fc; }
+        .chevron {
+            font-size: 10px;
+            color: var(--text-3);
+            transform: rotate(-90deg);
+            transition: transform .22s cubic-bezier(.4,0,.2,1);
+        }
+
+        /* ── Config / Manage Endpoints table ───────────────────────────── */
+        .config-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            margin-bottom: 16px;
+        }
+        .config-table th {
+            text-align: left;
+            padding: 11px 14px;
+            background: rgba(255,255,255,.04);
+            border: 1px solid rgba(255,255,255,.06);
+            color: var(--text-2);
+            font-weight: 600;
+            font-size: 11px;
+            letter-spacing: .4px;
+            text-transform: uppercase;
+        }
+        .config-table td {
+            padding: 7px 9px;
+            border: 1px solid rgba(255,255,255,.04);
+            vertical-align: middle;
+        }
+        .config-table tr:hover td { background: rgba(255,255,255,.028); }
+        .config-table input[type="text"],
+        .config-table input[type="number"] {
+            width: 100%;
+            padding: 8px 10px;
+            font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+            font-size: 13px;
+        }
+        .config-table .del-btn {
+            background: rgba(248,113,113,.08);
+            color: var(--danger);
+            border: 1px solid rgba(248,113,113,.20);
+            border-radius: 7px;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: background .15s;
+            white-space: nowrap;
+        }
+        .config-table .del-btn:hover { background: rgba(248,113,113,.22); }
+
+        /* ── Settings (credentials) form ───────────────────────────────── */
+        .settings-form {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 13px;
+            margin-bottom: 16px;
+        }
+        .settings-form label {
+            display: block;
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--text-3);
+            letter-spacing: .5px;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        .settings-form input { width: 100%; }
+        .pw-wrap { position: relative; }
+        .pw-wrap input { padding-right: 36px; }
+        .pw-toggle {
+            position: absolute;
+            right: 10px; top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            color: var(--text-3);
+            padding: 0; line-height: 1;
+        }
+        .pw-toggle:hover { color: var(--text-1); }
+        .creds-note { font-size: 11px; color: var(--text-3); margin-top: 4px; }
+        .creds-note code, p code {
+            font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+            font-size: 10px;
+            background: rgba(255,255,255,.08);
+            padding: 1px 5px;
+            border-radius: 4px;
+        }
+        .section-desc {
+            font-size: 12px;
+            color: var(--text-2);
+            margin-bottom: 15px;
+            line-height: 1.6;
+        }
+
+        /* ── Toast notifications ────────────────────────────────────────── */
+        #toastContainer {
+            position: fixed;
+            top: 20px; right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        }
+        .toast {
+            padding: 10px 15px;
+            border-radius: var(--r-sm);
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-1);
+            backdrop-filter: blur(48px) saturate(200%);
+            -webkit-backdrop-filter: blur(48px) saturate(200%);
+            pointer-events: auto;
+            animation: toastIn .3s cubic-bezier(.34,1.56,.64,1);
+            max-width: 320px;
+            word-break: break-word;
+            border: 1px solid var(--glass-border);
+            border-left-width: 3px;
+            box-shadow: 0 8px 30px rgba(0,0,0,.38);
+        }
+        .toast.success  { background: rgba(52,211,153,.10);  border-color: rgba(52,211,153,.26);  border-left-color: var(--success); }
+        .toast.error    { background: rgba(248,113,113,.10); border-color: rgba(248,113,113,.26); border-left-color: var(--danger); }
+        .toast.info     { background: rgba(99,102,241,.10);  border-color: rgba(99,102,241,.26);  border-left-color: var(--accent); }
+        .toast.warning  { background: rgba(251,191,36,.10);  border-color: rgba(251,191,36,.26);  border-left-color: var(--warning); }
+        .toast.out { animation: toastOut .22s ease forwards; }
+        /* ── Full-width bottom section ─────────────────────────────────── */
+        .bottom-section {
+            margin-top: 16px;
+        }
+        .bottom-section .col-label {
+            margin-bottom: 8px;
+        }
+
+        /* ── About / Info card ─────────────────────────────────────────── */
+        .about-card {
+            background: var(--sidebar-bg);
+            border-color: var(--sidebar-border);
+        }
+        .about-app-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .about-icon {
+            width: 40px; height: 40px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            border-radius: 11px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            box-shadow: 0 4px 14px rgba(99,102,241,.30);
+            flex-shrink: 0;
+        }
+        .about-app-name {
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text-1);
+            letter-spacing: -.3px;
+        }
+        .about-version {
+            display: inline-block;
+            font-size: 10px;
+            font-weight: 600;
+            color: #a5b4fc;
+            background: rgba(99,102,241,.14);
+            border: 1px solid rgba(99,102,241,.24);
+            padding: 1px 7px;
+            border-radius: 20px;
+            margin-top: 3px;
+            letter-spacing: .2px;
+        }
+        .about-desc {
+            font-size: 12px;
+            color: var(--text-2);
+            line-height: 1.65;
+            margin-bottom: 16px;
+        }
+        .about-divider {
+            height: 1px;
+            background: var(--glass-border);
+            margin: 14px 0;
+        }
+        .about-stack {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+        .stack-badge {
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 9px;
+            border-radius: 20px;
+            letter-spacing: .1px;
+        }
+        .stack-aws   { background: rgba(255,153,0,.10);  color: #fba94c; border: 1px solid rgba(255,153,0,.22); }
+        .stack-mysql { background: rgba(52,211,153,.09);  color: #6ee7b7; border: 1px solid rgba(52,211,153,.20); }
+        .stack-flask { background: rgba(99,102,241,.10); color: #a5b4fc; border: 1px solid rgba(99,102,241,.22); }
+        .stack-py    { background: rgba(139,92,246,.10); color: #c4b5fd; border: 1px solid rgba(139,92,246,.22); }
+        .about-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+        .about-meta-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-2);
+        }
+        .about-meta-row .meta-icon {
+            font-size: 13px;
+            width: 18px;
+            text-align: center;
+            flex-shrink: 0;
+        }
+        .about-meta-row a {
+            color: #a5b4fc;
+            text-decoration: none;
+        }
+        .about-meta-row a:hover { text-decoration: underline; }
+
+        /* Pin about body to same height as credentials form so sidebar never shifts */
+        #aboutBody { min-height: 415px; }
+
+        @keyframes toastIn  {
+            from { opacity:0; transform: translateX(36px) scale(.94); }
+            to   { opacity:1; transform: translateX(0)    scale(1);   }
+        }
+        @keyframes toastOut {
+            from { opacity:1; transform: translateX(0)    scale(1);   }
+            to   { opacity:0; transform: translateX(36px) scale(.94); }
+        }
+    </style>
+</head>
+<body>
+    <div id="toastContainer"></div>
+    <div class="container">
+
+        <!-- ── Header (full width) ──────────────────────────────────────── -->
+        <div class="header">
+            <div class="header-left">
+                <h1><span class="app-icon">🗄</span> DB Port Forwarding</h1>
+                <p>SSM port forwarding manager for pharmacy databases</p>
+            </div>
+            <div class="status-bar">
+                <div class="status-item">
+                    <div class="status-indicator" id="sessionIndicator"></div>
+                    <span id="sessionStatus">Not Connected</span>
+                </div>
+                <div class="status-item">
+                    <span id="activeCount">Active Sessions: 0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Active Connections (full width, shown when sessions are active) ── -->
+        <div class="card" id="pharmacyCard" style="display:none; margin-bottom:14px;">
+            <h2>Active Connections</h2>
+            <p class="card-sub">View and manage active port-forwarding sessions.</p>
+
+            <input type="text" id="activeSearch" class="search-input"
+                   placeholder="Search active connections…"
+                   oninput="filterActiveConnections(this.value)">
+
+            <div class="message" id="message"></div>
+
+            <div class="btn-group" id="actionButtons" style="display: none; margin-top: 4px;">
+                <button class="btn btn-danger" id="stopBtn" onclick="stopForwarding()" style="display: none;">
+                    ⛔ Stop All
+                </button>
+                <button class="btn btn-secondary" id="refreshBtn" onclick="refreshAllForwards()" style="display: none;">
+                    🔁 Refresh All
+                </button>
+            </div>
+
+            <div id="activeConnectionsContainer" style="display: none; margin-top: 6px;">
+                <div class="active-connections" id="activeConnections"></div>
+            </div>
+
+            <div id="closedConnectionsContainer" style="display: none; margin-top: 24px;">
+                <h3>Recently Closed</h3>
+                <div class="active-connections" id="closedConnections"></div>
+            </div>
+        </div>
+
+        <!-- ── Two-column layout ────────────────────────────────────────── -->
+        <div class="layout-grid">
+
+            <!-- ── Left sidebar: Configuration ──────────────────────────── -->
+            <aside class="sidebar">
+                <p class="col-label">Configuration</p>
+
+                <!-- About / App Info (open by default) -->
+                <div class="card about-card">
+                    <h2 class="config-toggle" onclick="toggleAboutCard()">
+                        ℹ️ About
+                        <span id="aboutChevron" class="chevron" style="transform:rotate(0deg)">&#9660;</span>
+                    </h2>
+                    <div id="aboutBody" style="margin-top:18px;">
+                        <div class="about-app-header">
+                            <div class="about-icon">🗄</div>
+                            <div>
+                                <div class="about-app-name">SSM DB TUNNEL</div>
+                                <span class="about-version">v1.0</span>
+                            </div>
+                        </div>
+                        <p class="about-desc">
+                            Manages AWS SSM port-forwarding tunnels to RDS/MySQL databases.
+                            Keeps tunnels alive with periodic keep-alive pings and auto-restores
+                            sessions after system sleep.
+                        </p>
+                        <div class="about-stack">
+                            <span class="stack-badge stack-aws">AWS SSM</span>
+                            <span class="stack-badge stack-mysql">MySQL</span>
+                            <span class="stack-badge stack-flask">Flask</span>
+                            <span class="stack-badge stack-py">Python</span>
+                        </div>
+                        <div class="about-divider"></div>
+                        <div class="about-meta">
+                            <div class="about-meta-row">
+                                <span class="meta-icon">👤</span>
+                                <span>Abhiram</span>
+                            </div>
+                            <div class="about-meta-row">
+                                <span class="meta-icon">🔄</span>
+                                <span>Keep-alive every 50 s</span>
+                            </div>
+                            <div class="about-meta-row">
+                                <span class="meta-icon">💤</span>
+                                <span>Auto-resumes on wake</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- DB Credentials (closed by default) -->
+                <div class="card">
+                    <h2 class="config-toggle" onclick="toggleSettingsCard()">
+                        🔑 DB Credentials
+                        <span id="settingsChevron" class="chevron">&#9660;</span>
+                    </h2>
+                    <div id="settingsBody" style="display:none; margin-top:18px;">
+                        <p class="section-desc">
+                            Stored locally on this machine. Used to send a <code>SELECT 1</code> ping
+                            every 50 s on active sessions to prevent AWS from closing idle SSM tunnels.
+                            The password is never returned by the API.
+                        </p>
+                        <div class="settings-form">
+                            <div>
+                                <label for="settingsUser">MySQL Username</label>
+                                <input type="text" id="settingsUser" autocomplete="username" placeholder="e.g. readonly_user">
+                            </div>
+                            <div>
+                                <label for="settingsPassword">Password</label>
+                                <div class="pw-wrap">
+                                    <input type="password" id="settingsPassword" autocomplete="current-password"
+                                           placeholder="Leave blank to keep current">
+                                    <button class="pw-toggle" type="button" onclick="togglePasswordVisibility()"
+                                            title="Show / hide password">👁</button>
+                                </div>
+                                <p class="creds-note" id="settingsPwHint"></p>
+                            </div>
+                            <div>
+                                <label for="settingsDatabase">Default Database</label>
+                                <input type="text" id="settingsDatabase" placeholder="mysql">
+                                <p class="creds-note">Used in the connection string. Defaults to <code>mysql</code>.</p>
+                            </div>
+                        </div>
+                        <div class="btn-group">
+                            <button class="btn btn-success" id="saveSettingsBtn" onclick="saveSettings()">💾 Save</button>
+                            <button class="btn btn-secondary" onclick="loadSettings()">Discard</button>
+                        </div>
+                    </div>
+                </div>
+
+            </aside>
+
+            <!-- ── Right panel: Operations ───────────────────────────────── -->
+            <div class="main-panel">
+                <p class="col-label">Operations</p>
+
+                <!-- Select Endpoints -->
+                <div class="card" id="disabledCard">
+                    <h2>Select Endpoints</h2>
+                    <p class="card-sub">Choose database endpoints to start port forwarding.</p>
+
+                    <input type="text" id="endpointSearch" class="search-input"
+                           placeholder="Search endpoints…"
+                           oninput="filterEndpointList(this.value)">
+
+                    <div id="disabledMessage" class="message"></div>
+                    <div class="loading" id="disabledLoading" style="display:none;">
+                        <div class="spinner"></div>
+                        <p style="font-size:12px; color: var(--text-2);">Loading endpoints…</p>
+                    </div>
+                    <div id="disabledListContainer"></div>
+                    <div class="btn-group" id="disabledActions" style="display:none; margin-top: 14px;">
+                        <button class="btn btn-primary" id="setupDisabledBtn" onclick="startForwardingSelected()">⚡ Start Forwarding Selected</button>
+                    </div>
+                </div>
+
+            </div><!-- /main-panel -->
+
+        </div><!-- /layout-grid -->
+
+        <!-- ── Full-width: Manage Endpoints ─────────────────────────────── -->
+        <div class="bottom-section">
+            <p class="col-label">Endpoint Configuration</p>
+            <div class="card">
+                <h2 class="config-toggle" onclick="toggleConfigCard()">
+                    ⚙️ Manage Endpoints
+                    <span id="configChevron" class="chevron">&#9660;</span>
+                </h2>
+                <div id="configBody" style="display:none; margin-top:20px;">
+                    <p class="section-desc">
+                        Add, edit, or remove hostname → local port mappings.
+                        Saving automatically stops and restarts affected forwarding sessions.
+                    </p>
+                    <table class="config-table" id="configTable">
+                        <thead>
+                            <tr>
+                                <th style="width:55%">Hostname</th>
+                                <th style="width:16%">Local Port</th>
+                                <th style="width:16%">Remote Port</th>
+                                <th style="width:13%"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="configTableBody"></tbody>
+                    </table>
+                    <div class="btn-group" style="flex-wrap:wrap;">
+                        <button class="btn btn-secondary" onclick="addConfigRow()">+ Add Row</button>
+                        <button class="btn btn-success" id="saveConfigBtn" onclick="saveConfig()">💾 Save Changes</button>
+                        <button class="btn btn-secondary" onclick="loadConfigEditor()">Discard</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /container -->
+
+    <script>
+        let endpoints = [];
+        let activeForwards = {}; // key: local_port
+        let forwardingActive = false;
+
+        // Update status periodically
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                document.getElementById('activeCount').textContent = `Active Sessions: ${data.active_sessions}`;
+                const indicator = document.getElementById('sessionIndicator');
+                if (data.active_sessions > 0) {
+                    indicator.classList.add('active');
+                    document.getElementById('sessionStatus').textContent = 'Connected';
+                } else {
+                    indicator.classList.remove('active');
+                    document.getElementById('sessionStatus').textContent = 'Not Connected';
+                }
+
+                // Sync activeForwards with server state.
+                // 1. Add any sessions the server knows about but the browser lost
+                //    (page reload, or started from another tab).
+                const serverPorts = new Set((data.active_ports || []).map(Number));
+                let changed = false;
+                for (const s of (data.sessions || [])) {
+                    if (!activeForwards[s.local_port]) {
+                        activeForwards[s.local_port] = s;
+                        changed = true;
+                    }
+                }
+                // 2. Remove cards for sessions stopped externally (menu-bar "Stop All").
+                for (const port of Object.keys(activeForwards)) {
+                    if (!serverPorts.has(Number(port))) {
+                        delete activeForwards[port];
+                        changed = true;
+                    }
+                }
+                if (changed) {
+                    renderActiveConnections();
+                }
+            } catch (e) {
+                console.error('Failed to update status', e);
+            }
+        }
+
+        setInterval(updateStatus, 5000);
+        updateStatus();
+
+        function showMessage(text, type) {
+            const message = document.getElementById('message');
+            message.innerHTML = text;
+            message.className = 'message ' + type;
+            message.style.display = 'block';
+            if (type === 'success') {
+                setTimeout(() => {
+                    message.style.display = 'none';
+                }, 10000);
+            }
+        }
+
+        function showDisabledMessage(text, type) {
+            const msg = document.getElementById('disabledMessage');
+            msg.innerHTML = text;
+            msg.className = 'message ' + type;
+            msg.style.display = 'block';
+            if (type === 'success') {
+                setTimeout(() => {
+                    msg.style.display = 'none';
+                }, 8000);
+            }
+        }
+
+        async function loadEndpoints() {
+            const loader = document.getElementById('disabledLoading');
+            const actions = document.getElementById('disabledActions');
+            loader.style.display = 'block';
+            actions.style.display = 'none';
+            try {
+                const resp = await fetch('/api/scrape-endpoints');
+                const data = await resp.json();
+                loader.style.display = 'none';
+                if (resp.ok && data.success) {
+                    endpoints = data.endpoints || [];
+                    renderEndpointList();
+                    if (endpoints.length) {
+                        actions.style.display = 'flex';
+                    }
+                } else {
+                    showDisabledMessage(data.error || 'Failed to load endpoints.', 'error');
+                }
+            } catch (e) {
+                loader.style.display = 'none';
+                showDisabledMessage('Error loading endpoints: ' + e.message, 'error');
+            }
+        }
+
+        function renderEndpointList() {
+            const container = document.getElementById('disabledListContainer');
+            if (!endpoints.length) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <p>No endpoints found in port map.</p>
+                    </div>
+                `;
+                return;
+            }
+            let html = `
+                <div class="select-all-container">
+                    <input type="checkbox" id="selectAllDisabled" onchange="toggleSelectAllEndpoints(this.checked)">
+                    <label for="selectAllDisabled">Select All</label>
+                </div>
+                <div class="pharmacy-list">
+            `;
+            endpoints.forEach((ep, idx) => {
+                const label = `${ep.hostname}:${ep.port}`;
+                const localPortInfo = ep.local_port ? ` &nbsp;|&nbsp; Local port: ${ep.local_port}` : '';
+                html += `
+                    <div class="pharmacy-item" data-label="${label.toLowerCase()}">
+                        <input type="checkbox" id="endpoint_${idx}" class="endpoint-checkbox" value="${idx}">
+                        <div class="pharmacy-info">
+                            <div class="pharmacy-name">${ep.hostname}</div>
+                            <div class="pharmacy-details">Remote port: ${ep.port}${localPortInfo}</div>
+                            <div class="pharmacy-url">${label}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function toggleSelectAllEndpoints(checked) {
+            document.querySelectorAll('.endpoint-checkbox').forEach(cb => cb.checked = checked);
+        }
+
+        async function startForwardingSelected() {
+            const checkboxes = Array.from(document.querySelectorAll('.endpoint-checkbox:checked'));
+            const indices = checkboxes.map(cb => parseInt(cb.value, 10));
+            if (!indices.length) {
+                showDisabledMessage('Please select at least one endpoint.', 'error');
+                return;
+            }
+            const btn = document.getElementById('setupDisabledBtn');
+            btn.disabled = true;
+            btn.textContent = '⚡ Setting up...';
+            const selected = indices.map(i => endpoints[i]);
+            showDisabledMessage(`Starting forwarding for ${selected.length} endpoint(s)...`, 'info');
+            try {
+                const resp = await fetch('/api/setup-forwarding', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ endpoints: selected })
+                });
+                const data = await resp.json();
+                if (resp.ok && data.success) {
+                    displayResults(data.results || []);
+                    forwardingActive = (data.results || []).some(r => r.success);
+                    // Uncheck all selected endpoints
+                    checkboxes.forEach(cb => cb.checked = false);
+                    // Uncheck select-all if it was checked
+                    const selectAllCb = document.getElementById('selectAllDisabled');
+                    if (selectAllCb) selectAllCb.checked = false;
+                    showDisabledMessage('Forwarding started for selected endpoints.', 'success');
+                } else {
+                    showDisabledMessage(data.error || 'Failed to start forwarding.', 'error');
+                }
+            } catch (e) {
+                showDisabledMessage('Error starting forwarding: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '⚡ Start Forwarding Selected';
+            }
+        }
+
+        function displayResults(results) {
+            const successCount = results.filter(r => r.success).length;
+            const failCount = results.length - successCount;
+            let summaryHtml = `<strong>Setup completed:</strong> ${successCount} successful, ${failCount} failed`;
+            if (failCount > 0) {
+                summaryHtml += '<div class="results-list">';
+                results.forEach(result => {
+                    if (!result.success) {
+                        summaryHtml += `
+                            <div class="result-item error">
+                                ✗ ${result.hostname || 'Endpoint'}:${result.remote_port || ''} - ${result.error}
+                            </div>
+                        `;
+                    }
+                });
+                summaryHtml += '</div>';
+            }
+            showMessage(summaryHtml, successCount > 0 ? 'success' : 'error');
+
+            const successfulResults = results.filter(r => r.success);
+            if (successfulResults.length > 0) {
+                successfulResults.forEach(result => {
+                    activeForwards[result.local_port] = result;
+                });
+                renderActiveConnections();
+            }
+        }
+
+        function renderActiveConnections() {
+            const container = document.getElementById('activeConnections');
+            const wrapper = document.getElementById('activeConnectionsContainer');
+            const actionButtons = document.getElementById('actionButtons');
+            const stopBtn = document.getElementById('stopBtn');
+            const refreshBtn = document.getElementById('refreshBtn');
+
+            if (!Object.keys(activeForwards).length) {
+                wrapper.style.display = 'none';
+                document.getElementById('pharmacyCard').style.display = 'none';
+                actionButtons.style.display = 'none';
+                stopBtn.style.display = 'none';
+                refreshBtn.style.display = 'none';
+                return;
+            }
+            wrapper.style.display = 'block';
+            document.getElementById('pharmacyCard').style.display = 'block';
+            actionButtons.style.display = 'flex';
+            stopBtn.style.display = 'inline-flex';
+            refreshBtn.style.display = 'inline-flex';
+
+            let html = '';
+            for (const [port, result] of Object.entries(activeForwards)) {
+                const label = `${result.hostname}:${result.remote_port}`;
+                html += `
+                    <div class="connection-card" id="connection-${port}" data-label="${label.toLowerCase()}">
+                        <button class="close-btn" onclick="closeConnection(${port})" title="Close connection">×</button>
+                        <h3>${label}</h3>
+                        <div class="port-info">🔌 localhost:${result.local_port}</div>
+                        <div class="hostname-info">→ ${label}</div>
+                        <span class="status-badge">🟢 Active</span>
+                    </div>
+                `;
+            }
+            container.innerHTML = html;
+        }
+
+        function filterEndpointList(query) {
+            const q = (query || '').toLowerCase();
+            document.querySelectorAll('#disabledListContainer .pharmacy-item').forEach(item => {
+                const label = item.getAttribute('data-label') || '';
+                item.style.display = !q || label.includes(q) ? '' : 'none';
+            });
+        }
+
+        function filterActiveConnections(query) {
+            const q = (query || '').toLowerCase();
+            document.querySelectorAll('#activeConnections .connection-card').forEach(card => {
+                const label = card.getAttribute('data-label') || '';
+                card.style.display = !q || label.includes(q) ? '' : 'none';
+            });
+        }
+
+        async function closeConnection(localPort) {
+            const result = activeForwards[localPort];
+            if (!result) return;
+            const label = `${result.hostname}:${result.remote_port}`;
+            if (!confirm(`Close connection for ${label}?`)) {
+                return;
+            }
+            try {
+                const resp = await fetch('/api/kill-port', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ port: result.local_port })
+                });
+                if (!resp.ok) {
+                    throw new Error('Failed to close connection');
+                }
+                delete activeForwards[localPort];
+                renderActiveConnections();
+                forwardingActive = Object.keys(activeForwards).length > 0;
+                showMessage(`Connection closed for ${label}`, 'success');
+            } catch (e) {
+                showMessage('Error closing connection: ' + e.message, 'error');
+            }
+        }
+
+        async function stopForwarding() {
+            if (!confirm('This will stop all port forwarding. Continue?')) return;
+            const btn = document.getElementById('stopBtn');
+            btn.disabled = true;
+            btn.textContent = '⛔ Stopping...';
+            try {
+                const resp = await fetch('/api/stop', { method: 'POST' });
+                const data = await resp.json();
+                if (resp.ok && data.success) {
+                    activeForwards = {};
+                    forwardingActive = false;
+                    renderActiveConnections();
+                    showMessage('All sessions stopped.', 'success');
+                } else {
+                    showMessage(data.error || 'Failed to stop sessions.', 'error');
+                    btn.disabled = false;
+                    btn.textContent = '⛔ Stop All';
+                }
+            } catch (e) {
+                showMessage('Stop error: ' + e.message, 'error');
+                btn.disabled = false;
+                btn.textContent = '⛔ Stop All';
+            }
+        }
+
+        async function refreshAllForwards() {
+            if (!confirm('This will stop and restart all forwarding sessions. Continue?')) return;
+            const btn = document.getElementById('refreshBtn');
+            btn.disabled = true;
+            btn.textContent = '🔁 Refreshing...';
+
+            // Capture current forwards before stopping
+            const endpointsToRestart = Object.values(activeForwards).map(r => ({
+                hostname: r.hostname,
+                port: r.remote_port
+            }));
+
+            try {
+                await fetch('/api/stop', { method: 'POST' });
+                activeForwards = {};
+                forwardingActive = false;
+                renderActiveConnections();
+
+                if (!endpointsToRestart.length) {
+                    showMessage('No active sessions to refresh.', 'info');
+                    return;
+                }
+
+                showMessage(`Restarting ${endpointsToRestart.length} session(s)...`, 'info');
+                const resp = await fetch('/api/setup-forwarding', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ endpoints: endpointsToRestart })
+                });
+                const data = await resp.json();
+                if (resp.ok && data.success) {
+                    displayResults(data.results || []);
+                    forwardingActive = (data.results || []).some(r => r.success);
+                    showMessage('All sessions refreshed successfully.', 'success');
+                } else {
+                    showMessage(data.error || 'Failed to restart sessions.', 'error');
+                }
+            } catch (e) {
+                showMessage('Refresh error: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔁 Refresh All';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', loadEndpoints);
+
+        // -------- Toast notifications --------
+
+        function showToast(message, type, duration) {
+            duration = duration || 4000;
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'toast ' + (type || 'info');
+            toast.textContent = message;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.classList.add('out');
+                toast.addEventListener('animationend', () => toast.remove(), { once: true });
+            }, duration);
+        }
+
+        // -------- Config editor --------
+
+        let configData = {};
+
+        function toggleConfigCard() {
+            const body = document.getElementById('configBody');
+            const chevron = document.getElementById('configChevron');
+            const isHidden = body.style.display === 'none';
+            body.style.display = isHidden ? '' : 'none';
+            chevron.style.transform = isHidden ? 'rotate(0deg)' : 'rotate(-90deg)';
+            if (isHidden) loadConfigEditor();
+        }
+
+        async function loadConfigEditor() {
+            try {
+                const resp = await fetch('/api/port-map');
+                const data = await resp.json();
+                if (!resp.ok || !data.success) {
+                    showToast(data.error || 'Failed to load config.', 'error');
+                    return;
+                }
+                configData = data.port_map || {};
+                renderConfigTable();
+            } catch (e) {
+                showToast('Error loading config: ' + e.message, 'error');
+            }
+        }
+
+        function renderConfigTable() {
+            const tbody = document.getElementById('configTableBody');
+            tbody.innerHTML = '';
+            Object.entries(configData)
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .forEach(([hostname, localPort]) => {
+                    tbody.appendChild(makeConfigRow(hostname, localPort, 3306));
+                });
+        }
+
+        function makeConfigRow(hostname, localPort, remotePort) {
+            const tr = document.createElement('tr');
+            const safeHost = String(hostname).replace(/"/g, '&quot;');
+            tr.innerHTML = `
+                <td><input type="text" class="cfg-hostname" value="${safeHost}" placeholder="e.g. db.example.com"></td>
+                <td><input type="number" class="cfg-localport" value="${localPort}" min="1" max="65535" placeholder="133xx"></td>
+                <td><input type="number" class="cfg-remoteport" value="${remotePort || 3306}" min="1" max="65535" placeholder="3306"></td>
+                <td><button class="del-btn" onclick="this.closest('tr').remove()">Remove</button></td>
+            `;
+            return tr;
+        }
+
+        function addConfigRow() {
+            const tbody = document.getElementById('configTableBody');
+            const newRow = makeConfigRow('', '', 3306);
+            tbody.appendChild(newRow);
+            newRow.querySelector('input').focus();
+        }
+
+        async function saveConfig() {
+            const rows = Array.from(document.querySelectorAll('#configTableBody tr'));
+            const newMap = {};
+            for (const row of rows) {
+                const h  = row.querySelector('.cfg-hostname').value.trim();
+                const lp = parseInt(row.querySelector('.cfg-localport').value, 10);
+                if (!h) {
+                    showToast('Hostname cannot be empty.', 'error');
+                    return;
+                }
+                if (!lp || lp < 1 || lp > 65535) {
+                    showToast(`Invalid local port for "${h}".`, 'error');
+                    return;
+                }
+                if (newMap[h] !== undefined) {
+                    showToast(`Duplicate hostname: ${h}`, 'error');
+                    return;
+                }
+                const usedPorts = Object.values(newMap);
+                if (usedPorts.includes(lp)) {
+                    showToast(`Duplicate local port ${lp} (already used by another entry).`, 'error');
+                    return;
+                }
+                newMap[h] = lp;
+            }
+
+            const btn = document.getElementById('saveConfigBtn');
+            btn.disabled = true;
+            btn.textContent = '💾 Saving...';
+            try {
+                const resp = await fetch('/api/port-map', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ port_map: newMap })
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.success) {
+                    showToast(data.error || 'Save failed.', 'error');
+                    return;
+                }
+                (data.sessions_stopped || []).forEach(s => {
+                    showToast(`Session stopped: ${s.hostname} (port ${s.local_port})`, 'warning', 5000);
+                });
+                (data.sessions_restarted || []).forEach(s => {
+                    showToast(`Session restarted: ${s.hostname} → port ${s.local_port}`, 'success', 5000);
+                });
+                showToast('Configuration saved successfully.', 'success');
+                configData = newMap;
+                renderConfigTable();
+                await loadEndpoints();
+            } catch (e) {
+                showToast('Error saving config: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '💾 Save';
+            }
+        }
+
+        // -------- Settings (DB credentials) --------
+
+        function toggleAboutCard() {
+            const aboutBody    = document.getElementById('aboutBody');
+            const aboutChevron = document.getElementById('aboutChevron');
+            const credsBody    = document.getElementById('settingsBody');
+            const credsChevron = document.getElementById('settingsChevron');
+            const isAboutHidden = aboutBody.style.display === 'none';
+            // Open about, close credentials
+            aboutBody.style.display    = isAboutHidden ? '' : 'none';
+            aboutChevron.style.transform = isAboutHidden ? 'rotate(0deg)' : 'rotate(-90deg)';
+            credsBody.style.display    = isAboutHidden ? 'none' : '';
+            credsChevron.style.transform = isAboutHidden ? 'rotate(-90deg)' : 'rotate(0deg)';
+            if (!isAboutHidden) loadSettings(); // credentials just became visible
+        }
+
+        function toggleSettingsCard() {
+            const credsBody    = document.getElementById('settingsBody');
+            const credsChevron = document.getElementById('settingsChevron');
+            const aboutBody    = document.getElementById('aboutBody');
+            const aboutChevron = document.getElementById('aboutChevron');
+            const isCredsHidden = credsBody.style.display === 'none';
+            // Open credentials, close about
+            credsBody.style.display    = isCredsHidden ? '' : 'none';
+            credsChevron.style.transform = isCredsHidden ? 'rotate(0deg)' : 'rotate(-90deg)';
+            aboutBody.style.display    = isCredsHidden ? 'none' : '';
+            aboutChevron.style.transform = isCredsHidden ? 'rotate(-90deg)' : 'rotate(0deg)';
+            if (isCredsHidden) loadSettings();
+        }
+
+        async function loadSettings() {
+            try {
+                const resp = await fetch('/api/credentials');
+                const data = await resp.json();
+                if (!resp.ok || !data.success) {
+                    showToast(data.error || 'Failed to load settings.', 'error');
+                    return;
+                }
+                const creds = data.credentials || {};
+                document.getElementById('settingsUser').value     = creds.user     || '';
+                document.getElementById('settingsDatabase').value = creds.database || 'mysql';
+                document.getElementById('settingsPassword').value = '';
+                const hint = document.getElementById('settingsPwHint');
+                hint.textContent = creds.password_set
+                    ? 'A password is saved. Enter a new one to change it.'
+                    : 'No password saved yet.';
+            } catch (e) {
+                showToast('Error loading settings: ' + e.message, 'error');
+            }
+        }
+
+        function togglePasswordVisibility() {
+            const input = document.getElementById('settingsPassword');
+            input.type = input.type === 'password' ? 'text' : 'password';
+        }
+
+        async function saveSettings() {
+            const user     = document.getElementById('settingsUser').value.trim();
+            const password = document.getElementById('settingsPassword').value;
+            const database = document.getElementById('settingsDatabase').value.trim() || 'mysql';
+
+            const btn = document.getElementById('saveSettingsBtn');
+            btn.disabled = true;
+            btn.textContent = '💾 Saving...';
+            try {
+                const payload = { user, database };
+                if (password) payload.password = password;
+
+                const resp = await fetch('/api/credentials', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.success) {
+                    showToast(data.error || 'Failed to save credentials.', 'error');
+                    return;
+                }
+                showToast('Credentials saved. Keep-alive pings will use these on the next cycle.', 'success', 5000);
+                await loadSettings(); // refresh hint
+            } catch (e) {
+                showToast('Error saving credentials: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '💾 Save';
+            }
+        }
+    </script>
+</body>
+</html>
